@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"core/state"
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/metacubex/mihomo/adapter"
@@ -428,7 +431,38 @@ func handleGetCountryCode(ip string, fn func(value string)) {
 
 func handleGetMemory(fn func(value string)) {
 	go func() {
-		fn(strconv.FormatUint(statistic.DefaultManager.Memory(), 10))
+		// 读取整个进程的物理内存占用（VmRSS）
+		file, err := os.Open("/proc/self/status")
+		if err != nil {
+			// 失败时回退到 Mihomo 内核内存统计
+			fn(strconv.FormatUint(statistic.DefaultManager.Memory(), 10))
+			return
+		}
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		var rssBytes uint64
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "VmRSS:") {
+				// 格式: VmRSS:    12345 kB
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					rssKB, err := strconv.ParseUint(fields[1], 10, 64)
+					if err == nil {
+						rssBytes = rssKB * 1024 // 转换为字节
+					}
+				}
+				break
+			}
+		}
+
+		if rssBytes > 0 {
+			fn(strconv.FormatUint(rssBytes, 10))
+		} else {
+			// 读取失败时回退
+			fn(strconv.FormatUint(statistic.DefaultManager.Memory(), 10))
+		}
 	}()
 }
 
